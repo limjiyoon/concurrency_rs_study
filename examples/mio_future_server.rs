@@ -6,7 +6,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 pub struct Executor {
@@ -32,8 +32,7 @@ impl Executor {
 
     fn run<F: Future>(&self, future: F) -> F::Output {
         let mut pinned_future = Box::pin(future);
-        let waker = create_dummy_waker();
-        let mut context = Context::from_waker(&waker);
+        let mut context = Context::from_waker(Waker::noop());
 
         loop {
             match pinned_future.as_mut().poll(&mut context) {
@@ -286,19 +285,6 @@ impl Drop for AsyncTcpStream {
         self.executor.deregister(&mut self.inner).unwrap();
         println!("Connection {:?} deregistered", self.addr)
     }
-}
-
-fn create_dummy_waker() -> Waker {
-    fn raw_waker() -> RawWaker {
-        fn no_op(_: *const ()) {}
-        fn clone(_: *const ()) -> RawWaker {
-            raw_waker()
-        }
-        let vtable = &RawWakerVTable::new(clone, no_op, no_op, no_op);
-        RawWaker::new(std::ptr::null::<()>(), vtable)
-    }
-
-    unsafe { Waker::from_raw(raw_waker()) }
 }
 
 async fn echo_server(executor: Arc<Executor>) -> io::Result<()> {
