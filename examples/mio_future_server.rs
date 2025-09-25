@@ -32,10 +32,10 @@ impl Task {
     fn poll(self: &Arc<Self>) {
         let waker = waker_ref(self);
         let mut cx = Context::from_waker(&*waker);
-        let mut slot = self.future.lock().unwrap();
-        if let Some(future) = slot.as_mut() {
+        let mut future_slot = self.future.lock().unwrap();
+        if let Some(future) = future_slot.as_mut() {
             if let Poll::Ready(()) = future.as_mut().poll(&mut cx) {
-                *slot = None;
+                *future_slot = None;
             }
         }
     }
@@ -80,18 +80,18 @@ impl Executor {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        let (ready_tx, mio_waker) = {
+        let (ready_queue, mio_waker) = {
             let inner = self.inner.lock().unwrap();
-            let ready_tx = inner
+            let ready_queue = inner
                 .ready_queue
                 .as_ref()
                 .expect("Spawn called before run")
                 .clone();
 
-            (ready_tx, inner.mio_waker.clone())
+            (ready_queue, inner.mio_waker.clone())
         };
-        let task = Arc::new(Task::new(Box::pin(future), ready_tx.clone(), mio_waker));
-        let _ = ready_tx.send(task);
+        let task = Arc::new(Task::new(Box::pin(future), ready_queue.clone(), mio_waker));
+        let _ = ready_queue.send(task);
         let _ = self.inner.lock().unwrap().mio_waker.wake();
     }
 
