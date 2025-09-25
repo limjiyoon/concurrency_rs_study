@@ -1,13 +1,52 @@
+use futures::task::{ArcWake, waker_ref};
 use mio::net::{TcpListener as MioTcpListener, TcpStream as MioTcpStream};
-use mio::{Events, Interest, Poll as MioPoll, Token};
+use mio::{Events, Interest, Poll as MioPoll, Token, Waker as MioWaker};
 use std::collections::HashMap;
 use std::future::Future;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
+
+struct Task {
+    future: Mutex<Option<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>>,
+    ready_queue: mpsc::Sender<Arc<Task>>,
+    mio_waker: Arc<MioWaker>,
+}
+
+impl Task {
+    fn new(
+        future: Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
+        ready_queue: mpsc::Sender<Arc<Task>>,
+        mio_waker: Arc<MioWaker>,
+    ) -> Self {
+        Self {
+            future: Mutex::new(Some(future)),
+            ready_queue,
+            mio_waker,
+        }
+    }
+
+    fn poll(self: &Arc<Self>) {
+        let waker = waker_ref(self);
+        let mut cx = Context::from_waker(&*waker);
+        let mut slot = self.future.lock().unwrap();
+        if let Some(future) = slot.as_mut() {
+            if let Poll::Ready(()) = future.as_mut().poll(&mut cx) {
+                *slot = None;
+            }
+        }
+    }
+}
+
+impl ArcWake for Task {
+    fn wake_by_ref(arc_self: &Arc<Self>) {
+        arc_self.ready_queue.send(arc_self.clone()).unwrap();
+        arc_self.mio_waker.wake().unwrap();
+    }
+}
 
 pub struct Executor {
     inner: Arc<Mutex<ExecutorInner>>,
@@ -15,33 +54,68 @@ pub struct Executor {
 
 struct ExecutorInner {
     poll: MioPoll,
+    mio_waker: Arc<MioWaker>,
     wakers: HashMap<Token, Waker>,
     last_token_id: usize,
+    ready_queue: Option<mpsc::Sender<Arc<Task>>>,
 }
 
 impl Executor {
     fn new() -> io::Result<Self> {
+        let poll = MioPoll::new()?;
+        let last_token_id = 0;
+        let mio_waker = Arc::new(MioWaker::new(poll.registry(), Token(last_token_id))?);
         Ok(Self {
             inner: Arc::new(Mutex::new(ExecutorInner {
-                poll: MioPoll::new()?,
+                poll,
+                mio_waker,
                 wakers: HashMap::new(),
-                last_token_id: 0, // 0 is reserved
+                last_token_id, // 0 is reserved
+                ready_queue: None,
             })),
         })
     }
 
-    fn run<F: Future>(&self, future: F) -> F::Output {
-        let mut pinned_future = Box::pin(future);
-        let mut context = Context::from_waker(Waker::noop());
+    fn spawn<F>(&self, future: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let (ready_tx, mio_waker) = {
+            let inner = self.inner.lock().unwrap();
+            let ready_tx = inner
+                .ready_queue
+                .as_ref()
+                .expect("Spawn called before run")
+                .clone();
+
+            (ready_tx, inner.mio_waker.clone())
+        };
+        let task = Arc::new(Task::new(Box::pin(future), ready_tx.clone(), mio_waker));
+        let _ = ready_tx.send(task);
+        let _ = self.inner.lock().unwrap().mio_waker.wake();
+    }
+
+    fn run<F, R>(&self, future: F) -> R
+    where
+        F: Future<Output = R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let (tx, rx) = mpsc::channel::<Arc<Task>>();
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.ready_queue = Some(tx.clone());
+        }
+        self.spawn(async move {
+            future.await;
+        });
 
         loop {
-            match pinned_future.as_mut().poll(&mut context) {
-                Poll::Ready(result) => return result,
-                Poll::Pending => {
-                    if let Err(_) = self.poll_events(Duration::from_millis(10)) {
-                        std::thread::sleep(Duration::from_millis(1));
-                    }
-                }
+            while let Some(task) = rx.try_recv().ok() {
+                task.poll();
+            }
+
+            if let Err(_) = self.poll_events(Duration::from_millis(10)) {
+                std::thread::sleep(Duration::from_millis(1));
             }
         }
     }
@@ -56,7 +130,7 @@ impl Executor {
             .collect::<Vec<_>>();
 
         for waker in wakers_to_wake {
-            waker.wake();
+            waker.wake_by_ref();
         }
 
         Ok(())
@@ -287,38 +361,43 @@ impl Drop for AsyncTcpStream {
     }
 }
 
+async fn handle_conn(mut socket: AsyncTcpStream) -> io::Result<()> {
+    let mut buffer = [0; 1024];
+    loop {
+        let n = socket.read(&mut buffer).await?;
+        if n == 0 {
+            break;
+        }
+
+        println!(
+            "Read {} bytes ({})",
+            n,
+            String::from_utf8_lossy(&buffer[..n]).trim_end()
+        );
+
+        socket.write(&buffer[..n]).await?;
+        println!(
+            "Echoed {} bytes ({})",
+            n,
+            String::from_utf8_lossy(&buffer[..n]).trim_end()
+        );
+    }
+    Ok(())
+}
+
 async fn echo_server(executor: Arc<Executor>) -> io::Result<()> {
     let mut listener = AsyncTcpListener::bind("127.0.0.1:10000", executor.clone())?;
 
     loop {
-        let (mut socket, _) = listener.accept().await?;
+        let (socket, _) = listener.accept().await?;
 
-        let mut buffer = [0; 1024];
-        loop {
-            let n = socket.read(&mut buffer).await?;
-            if n == 0 {
-                break;
-            }
-
-            println!(
-                "Read {} bytes ({})",
-                n,
-                String::from_utf8_lossy(&buffer[..n]).trim_end()
-            );
-
-            socket.write(&buffer[..n]).await?;
-            println!(
-                "Echoed {} bytes ({})",
-                n,
-                String::from_utf8_lossy(&buffer[..n]).trim_end()
-            );
-        }
+        executor.spawn(async move {
+            let _ = handle_conn(socket).await;
+        });
     }
 }
 
 fn main() {
     let executor = Arc::new(Executor::new().unwrap());
-    executor.run(async {
-        let _ = echo_server(executor.clone()).await;
-    })
+    let _ = executor.run(echo_server(executor.clone()));
 }
