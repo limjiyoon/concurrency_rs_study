@@ -38,26 +38,21 @@ enum AsyncCommand {
 enum LockCommand {
     /// Test Semaphore
     Semaphore,
+    /// Test Channel
+    Channel,
 }
 
 fn main() {
     let cli = Cli::parse();
     match &cli.command_group {
         CommandGroup::ASYNC { command } => match command {
-            AsyncCommand::Mio => {
-                echo_server::mio_echo_server::run();
-            }
-            AsyncCommand::MioFuture => {
-                echo_server::mio_future_server::run();
-            }
-            AsyncCommand::Tokio => {
-                echo_server::tokio_echo_server::run();
-            }
+            AsyncCommand::Mio => echo_server::mio_echo_server::run(),
+            AsyncCommand::MioFuture => echo_server::mio_future_server::run(),
+            AsyncCommand::Tokio => echo_server::tokio_echo_server::run(),
         },
         CommandGroup::LOCK { command } => match command {
-            LockCommand::Semaphore => {
-                lock::semaphore::run();
-            }
+            LockCommand::Semaphore => lock::semaphore::run(),
+            LockCommand::Channel => lock::channel::run(),
         },
     }
 }

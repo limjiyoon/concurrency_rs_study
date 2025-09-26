@@ -2,14 +2,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-struct Semaphore {
+pub struct Semaphore {
     mutex: Mutex<isize>,
     cond: Condvar,
     max: isize,
 }
 
 impl Semaphore {
-    fn new(max: isize) -> Self {
+    pub fn new(max: isize) -> Self {
         Self {
             mutex: Mutex::new(0),
             cond: Condvar::new(),
@@ -17,7 +17,7 @@ impl Semaphore {
         }
     }
 
-    fn wait(&self) {
+    pub fn wait(&self) {
         let mut count = self.mutex.lock().unwrap();
         while *count >= self.max {
             count = self.cond.wait(count).unwrap();
@@ -25,7 +25,7 @@ impl Semaphore {
         *count += 1;
     }
 
-    fn post(&self) {
+    pub fn post(&self) {
         let mut count = self.mutex.lock().unwrap();
         *count -= 1;
         self.cond.notify_one(); // *count < self.max
