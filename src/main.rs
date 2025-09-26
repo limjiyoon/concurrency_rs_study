@@ -1,4 +1,5 @@
 mod echo_server;
+mod lock;
 
 use clap::{Parser, Subcommand};
 
@@ -17,7 +18,10 @@ enum CommandGroup {
         command: AsyncCommand,
     },
     /// Test Lock algorithm
-    LOCK,
+    LOCK {
+        #[command(subcommand)]
+        command: LockCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -28,6 +32,12 @@ enum AsyncCommand {
     MioFuture,
     ///Test Tokio echo server
     Tokio,
+}
+
+#[derive(Subcommand)]
+enum LockCommand {
+    /// Test Semaphore
+    Semaphore,
 }
 
 fn main() {
@@ -44,8 +54,10 @@ fn main() {
                 echo_server::tokio_echo_server::run();
             }
         },
-        CommandGroup::LOCK => {
-            println!("Lock");
-        }
+        CommandGroup::LOCK { command } => match command {
+            LockCommand::Semaphore => {
+                lock::semaphore::run();
+            }
+        },
     }
 }
