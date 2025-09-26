@@ -40,6 +40,8 @@ enum LockCommand {
     Semaphore,
     /// Test Channel
     Channel,
+    /// Test Bakery algorithm
+    Bakery,
 }
 
 fn main() {
@@ -53,6 +55,7 @@ fn main() {
         CommandGroup::LOCK { command } => match command {
             LockCommand::Semaphore => lock::semaphore::run(),
             LockCommand::Channel => lock::channel::run(),
+            LockCommand::Bakery => lock::bakery::run(),
         },
     }
 }
