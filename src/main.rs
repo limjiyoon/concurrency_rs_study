@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 #[command(version, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]
-    subgroup: CommandGroup,
+    command_group: CommandGroup,
 }
 
 #[derive(Subcommand)]
@@ -32,7 +32,7 @@ enum AsyncCommand {
 
 fn main() {
     let cli = Cli::parse();
-    match &cli.subgroup {
+    match &cli.command_group {
         CommandGroup::ASYNC { command } => match command {
             AsyncCommand::Mio => {
                 echo_server::mio_echo_server::run();
