@@ -176,7 +176,7 @@ impl MioEchoServer {
     }
 }
 
-pub fn main() {
+pub fn run() {
     let addr = "127.0.0.1:10000".parse().unwrap();
     let mut server = MioEchoServer::new(addr).unwrap();
     let poll_timeout = Duration::from_millis(1000);

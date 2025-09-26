@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = { version = "4.5.48", features = ["derive"] }
+clap_complete = "4.5.58"
 futures = "0.3.31"
 libc = "0.2.175"
 mio = { version = "1.0.4", features = ["net", "os-poll"] }

@@ -2,7 +2,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 #[tokio::main]
-async fn main() {
+pub async fn run() {
     let addr = "127.0.0.1:10000";
     let listener = TcpListener::bind(addr).await.unwrap();
 

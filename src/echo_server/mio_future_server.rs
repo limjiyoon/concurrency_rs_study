@@ -397,7 +397,7 @@ async fn echo_server(executor: Arc<Executor>) -> io::Result<()> {
     }
 }
 
-fn main() {
+pub fn run() {
     let executor = Arc::new(Executor::new().unwrap());
     let _ = executor.run(echo_server(executor.clone()));
 }
